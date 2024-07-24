@@ -1,0 +1,14 @@
+sklearn
+matplotlib
+anndata
+pandas
+numpy
+seaborn
+colorcet
+scanpy
+igraph
+colorcet
+leidenalg
+umap
+copy
+os
