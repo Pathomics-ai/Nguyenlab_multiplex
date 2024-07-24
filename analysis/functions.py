@@ -37,3 +37,25 @@ def map_scatter(x, y, c, **kwargs):
     kwargs.pop("vmax", None)
     scatter = plt.scatter(df[x], df[y], c=df[c], vmin=vmin, vmax=vmax, **kwargs)
     plt.colorbar(scatter, ax=plt.gca(), label=f'{marker} Intensity')
+
+def leiden_cluster(embedding):
+    """ Return a numpy array <labels>, which contains the cluster labels for every data point in embedding. 
+    Typically use UMAP embedding, but can use any tuple of NDarrays. Code from Shamini. """
+
+    # make a k-nearest neighbors graph
+    k = 15  # can adjust this value
+    knn_graph = kneighbors_graph(embedding, n_neighbors=k, mode='connectivity', include_self=False)
+    sources, targets = knn_graph.nonzero()
+    edges = list(zip(sources.tolist(), targets.tolist()))
+
+    # Create an igraph graph from the knn graph
+    g = ig.Graph(edges=edges)
+
+    # Perform Leiden clustering
+    partition = leidenalg.find_partition(g, leidenalg.RBConfigurationVertexPartition, resolution_parameter=0.3)
+
+    # Extract cluster labels
+    labels = np.array(partition.membership)
+    return labels
+
+
