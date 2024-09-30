@@ -2,7 +2,7 @@ import sklearn
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import kneighbors_graph
 from sklearn.decomposition import PCA
-
+from scipy.spatial import Delaunay
 import matplotlib.pyplot as plt
 from anndata import AnnData
 import pandas as pd
@@ -67,4 +67,194 @@ def leiden_cluster(embedding, res):
     labels = np.array(partition.membership)
     return labels
 
+def plot_zoomed_triangulation_centered(ax, points, filtered_edges, title, zoom_factor=0.01):
+    """
+    Plot a zoomed-in section of the Delaunay triangulation with filtered edges (2D array).
+
+    Parameters:
+    ax: matplotlib axis object to plot on
+    points: numpy array of shape (n, 2), representing the coordinates of points
+    filtered_edges: list of edges to plot, where each edge is a tuple of two point indices
+    title: title of the plot
+    zoom_factor: float, fraction of the graph to zoom in on, centered at the middle
+    """
+    # zoom in on center of the graph
+    min_x, min_y = points.min(axis=0)
+    max_x, max_y = points.max(axis=0)
+    center_x = (min_x + max_x) / 2
+    center_y = (min_y + max_y) / 2
+
+    width = (max_x - min_x) * zoom_factor
+    height = (max_y - min_y) * zoom_factor
+
+    x_min_zoom = center_x - width / 2
+    x_max_zoom = center_x + width / 2
+    y_min_zoom = center_y - height / 2
+    y_max_zoom = center_y + height / 2
+
+    # filter points within the zoomed bounding box
+    zoomed_points = points[
+        (points[:, 0] >= x_min_zoom) & (points[:, 0] <= x_max_zoom) &
+        (points[:, 1] >= y_min_zoom) & (points[:, 1] <= y_max_zoom)
+    ]
+    
+    # map original points to their indices
+    point_index_map = {tuple(point): idx for idx, point in enumerate(points)}
+    zoomed_point_indices = {point_index_map[tuple(point)] for point in zoomed_points}
+
+    # filter edges within the zoomed area
+    zoomed_edges = [
+        edge for edge in filtered_edges
+        if edge[0] in zoomed_point_indices and edge[1] in zoomed_point_indices
+    ]
+
+    # plot
+    for edge in zoomed_edges:
+        x_values = [points[edge[0]][0], points[edge[1]][0]]
+        y_values = [points[edge[0]][1], points[edge[1]][1]]
+        ax.plot(x_values, y_values, 'r-', lw=1)
+    ax.scatter(zoomed_points[:, 0], zoomed_points[:, 1], c='blue', s=20)
+
+    # set plot limits to the zoomed area
+    ax.set_xlim(x_min_zoom, x_max_zoom)
+    ax.set_ylim(y_min_zoom, y_max_zoom)
+    ax.set_title(title)
+
+def plot_zoomed_triangulation(ax, points, filtered_edges, title, x_min_zoom, x_max_zoom, y_min_zoom, y_max_zoom):
+    """
+    Plot a zoomed-in section of the Delaunay triangulation with filtered edges (2D array).
+
+    Parameters:
+    ax: matplotlib axis object to plot on
+    points: numpy array of shape (n, 2), representing the coordinates of points
+    filtered_edges: list of edges to plot, where each edge is a tuple of two point indices
+    title: title of the plot
+    x_min_zoom: minimum x value
+    WLOG for x_max_zoom, y_min_zoom, y_max_zoom
+    """
+    # filter points within the zoomed bounding box
+    zoomed_points = points[
+        (points[:, 0] >= x_min_zoom) & (points[:, 0] <= x_max_zoom) &
+        (points[:, 1] >= y_min_zoom) & (points[:, 1] <= y_max_zoom)
+    ]
+    
+    # map original points to their indices
+    point_index_map = {tuple(point): idx for idx, point in enumerate(points)}
+    zoomed_point_indices = {point_index_map[tuple(point)] for point in zoomed_points}
+
+    # filter edges within the zoomed area
+    zoomed_edges = [
+        edge for edge in filtered_edges
+        if edge[0] in zoomed_point_indices and edge[1] in zoomed_point_indices
+    ]
+
+    # plot
+    for edge in zoomed_edges:
+        x_values = [points[edge[0]][0], points[edge[1]][0]]
+        y_values = [points[edge[0]][1], points[edge[1]][1]]
+        ax.plot(x_values, y_values, 'r-', lw=1)
+    ax.scatter(zoomed_points[:, 0], zoomed_points[:, 1], c='blue', s=20)
+
+    # set plot limits to the zoomed area
+    ax.set_xlim(x_min_zoom, x_max_zoom)
+    ax.set_ylim(y_min_zoom, y_max_zoom)
+    ax.set_title(title)
+
+
+def plot_filtered_triangulation(ax, points, filtered_edges, title):
+    """ Plot the Delaunay triangulation with filtered edges (2D array) """
+    for edge in filtered_edges:
+        x_values = [points[edge[0]][0], points[edge[1]][0]]
+        y_values = [points[edge[0]][1], points[edge[1]][1]]
+        ax.plot(x_values, y_values, 'r-', lw=1)
+    ax.scatter(points[:, 0], points[:, 1], c='blue', s=20)
+    ax.set_title(title)
+
+def filter_edges(tri, distance_cutoff, phenotype_mask):
+    """ Filter edges based on a single distance cutoff and phenotype mask. """
+    edges = set()
+    for simplex in tri.simplices:
+        for i in range(3):
+            edges.add(tuple(sorted([simplex[i], simplex[(i + 1) % 3]])))
+    
+    points = tri.points
+    filtered_edges = []
+
+    # create a mask to determine valid vertices
+    valid_vertices = set()
+    for vertex_index in range(len(points)):
+        if phenotype_mask[vertex_index]:
+            valid_vertices.add(vertex_index)
+
+    for edge in edges:
+        if edge[0] in valid_vertices and edge[1] in valid_vertices:
+            p1, p2 = points[edge[0]], points[edge[1]]
+            distance = np.linalg.norm(p1 - p2)
+            if distance <= distance_cutoff:
+                filtered_edges.append(edge)
+    
+    return filtered_edges
+
+def analyze_slide(df, distance_cutoffs, phenotypes_oi, boundaries: dict):
+    """ Analyze each slide, perform triangulation, filter edges for each cutoff, and plot within boundaries. 
+    <boundaries> should map strings from the Parent column to a 4-element tuple of bounds with 
+    the following format: (x_min, x_max, y_min, y_max)
+    """
+    grouped = df.groupby('Parent')
+    
+    for name, group in grouped:
+        coords = group[['Centroid X µm', 'Centroid Y µm']].values
+        phenotypes = group['Phenotype'].values
+
+        phenotype_mask = np.array([phenotype in phenotypes_oi for phenotype in phenotypes])
+        
+        # Delaunay triangulation
+        tri = Delaunay(coords)
+        
+        # plot for each distance cutoff
+        num_cutoffs = len(distance_cutoffs)
+        fig, axs = plt.subplots(1, num_cutoffs, figsize=(15, 5))
+        if num_cutoffs == 1:
+            axs = [axs]
+        
+        for i, cutoff in enumerate(distance_cutoffs):
+            filtered_edges = filter_edges(tri, cutoff, phenotype_mask) # get filtered graph
+            x_min, x_max, y_min, y_max = boundaries[name]
+            plot_zoomed_triangulation(ax=axs[i], 
+                                      points=coords, 
+                                      filtered_edges=filtered_edges, 
+                                      title=f'Cutoff: {cutoff} µm', 
+                                      x_min_zoom=x_min,
+                                      x_max_zoom=x_max,
+                                      y_min_zoom=y_min,
+                                      y_max_zoom=y_max)
+        
+        plt.suptitle(f'Slide ID: {name}')
+        plt.show()
+
+def analyze_slide_zoomed_out(df, distance_cutoffs, phenotypes_oi):
+    """ Analyze each slide, perform triangulation, filter edges for each cutoff, and plot. """
+    grouped = df.groupby('Parent')
+    
+    for name, group in grouped:
+        coords = group[['Centroid X µm', 'Centroid Y µm']].values
+        phenotypes = group['Phenotype'].values
+
+        phenotype_mask = np.array([phenotype in phenotypes_oi for phenotype in phenotypes])
+        
+        # Delaunay triangulation
+        tri = Delaunay(coords)
+        
+        # plot for each distance cutoff
+        num_cutoffs = len(distance_cutoffs)
+        fig, axs = plt.subplots(1, num_cutoffs, figsize=(15, 5))
+        if num_cutoffs == 1:
+            axs = [axs]
+        
+        for i, cutoff in enumerate(distance_cutoffs):
+            filtered_edges = filter_edges(tri, cutoff, phenotype_mask) # get filtered graph
+            plot_filtered_triangulation(axs[i], coords, filtered_edges, f'Cutoff: {cutoff} µm')
+        
+        plt.suptitle(f'Slide ID: {name}')
+        plt.show()
 
