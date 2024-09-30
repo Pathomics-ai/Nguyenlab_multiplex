@@ -17,10 +17,17 @@ import umap
 import copy
 import os
 
-def glasbey(n_colors):
-    """ Return a list of n RGB tuples representing colors from the Glasbey colour map"""
+def glasbey(n_colours):
+    """ Return a list of n RGB tuples representing colours from the Glasbey colour map"""
     cm = cc.cm.glasbey_bw_minc_20
-    return [cm(val)[:3] for val in np.linspace(0, 1, cm.N)][:n_colors]
+    return [cm(val)[:3] for val in np.linspace(0, 1, cm.N)][:n_colours]
+
+def get_colours_from(colourmap_name, n):
+    """ Return a list of n colours from the specified Matplotlib colourmap."""
+    cmap = plt.get_cmap(colourmap_name)
+    colours = [cmap(i / n) for i in range(n)]
+    
+    return colours
 
 # function to plot the intensity of each marker on the dimensional reduction plots
 def map_scatter(x, y, c, **kwargs):
